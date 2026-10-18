@@ -63,6 +63,7 @@ class JarvisApp:
         self._voice_pause_seconds = float(self._app_settings.conversation.voice_pause_seconds)
         self._voice_last_speech_at: float = 0.0
         self._hud_phase: str = "idle"
+        self._level_decay: float = 0.0
         self._voice_orb_wrap: Any = None
         self._hud_state_label: Any = None
         self._hud_detail_label: Any = None
@@ -91,7 +92,12 @@ class JarvisApp:
         if self._status_label:
             self._status_label.set_text(state)
 
-    def _set_voice_phase(self, phase: str, detail: str | None = None) -> None:
+    def _set_voice_phase(self, phase: str, detail: str | None = None, *, force: bool = False) -> None:
+        rank = {"idle": 0, "reconnecting": 1, "listening": 2, "thinking": 3, "speaking": 4}
+        if not force and rank.get(phase, 0) < rank.get(self._hud_phase, 0):
+            if detail is not None and self._hud_detail_label and phase == "listening":
+                self._hud_detail_label.set_text(detail)
+            return
         self._hud_phase = phase
         titles = {
             "idle": "○ STANDBY",
@@ -128,14 +134,19 @@ class JarvisApp:
             bar.style(f"transform: scaleY({scale})")
 
     def _tick_voice_hud(self) -> None:
-        if not self._voice_mode_active or self._voice_busy or not self._voice_pending_text:
+        if self._level_decay > 0:
+            self._level_decay = max(0.0, self._level_decay - 0.08)
+            self._update_level_bars(self._level_decay)
+        if not self._voice_mode_active or self._voice_busy:
             return
-        if self._voice_last_speech_at <= 0:
+        if self._hud_phase != "listening":
+            return
+        if not self._voice_pending_text or self._voice_last_speech_at <= 0:
             return
         remaining = self._voice_pause_seconds - (time.monotonic() - self._voice_last_speech_at)
-        if remaining > 0:
+        if remaining > 0 and self._hud_detail_label:
             secs = int(remaining + 0.99)
-            self._set_voice_phase("listening", f"Pause {secs}s to send · still listening…")
+            self._hud_detail_label.set_text(f"Pause {secs}s to send · then Jarvis thinks & speaks")
 
     def _append_message(self, role: str, content: str) -> None:
         if not self._chat_container:
@@ -218,8 +229,8 @@ class JarvisApp:
         self._voice_pending_text = text
         self._voice_last_speech_at = time.monotonic()
         self._update_live_transcript(text, listening=True)
-        if self._hud_phase not in ("thinking", "speaking"):
-            self._set_voice_phase("listening", "Hearing you…")
+        self._set_voice_phase("listening", "Hearing you…", force=True)
+        self._level_decay = max(self._level_decay, 0.35)
         self._schedule_voice_send_after_pause()
 
     def _update_live_transcript(self, text: str, listening: bool = True) -> None:
@@ -252,7 +263,7 @@ class JarvisApp:
         self._append_message("user", text)
         self._update_live_transcript("")
         if self._voice_mode_active:
-            self._set_voice_phase("thinking")
+            self._set_voice_phase("thinking", "Sending to Gemini…", force=True)
             self._set_voice_busy(True)
         else:
             self._set_state("thinking")
@@ -268,13 +279,13 @@ class JarvisApp:
                 self._refresh_jobs()
             elif result.assistant_text:
                 if self._voice_mode_active:
-                    self._set_voice_phase("speaking")
+                    self._set_voice_phase("speaking", "Playing reply…", force=True)
                     self._set_voice_busy(True)
                 self._tts.speak(result.assistant_text)
                 if self._voice_mode_active:
                     await asyncio.to_thread(self._tts.wait_until_done, 120.0)
             if self._voice_mode_active:
-                self._set_voice_phase("listening", "Your turn — speak when ready")
+                self._set_voice_phase("listening", "Your turn — speak when ready", force=True)
             else:
                 self._set_state("idle")
         except Exception as exc:
@@ -403,7 +414,7 @@ class JarvisApp:
                     "Tap the orb to stop.",
                 )
             else:
-                self._set_state("idle")
+                self._set_voice_phase("idle", force=True)
                 self._set_voice_busy(False)
                 self._cancel_voice_pause_timer()
                 self._voice_pending_text = ""
@@ -416,14 +427,9 @@ class JarvisApp:
         if action == "level":
             if self._voice_mode_active and not self._voice_busy:
                 try:
-                    self._update_level_bars(float(payload.get("value", 0)))
+                    self._level_decay = max(self._level_decay, float(payload.get("value", 0)))
                 except (TypeError, ValueError):
                     pass
-            return
-
-        if action == "warn":
-            if self._voice_mode_active and not self._voice_busy:
-                self._set_voice_phase("reconnecting")
             return
 
         if action == "error":
