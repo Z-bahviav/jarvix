@@ -13,14 +13,6 @@ class Recording:
     sample_rate: int
 
 
-def audio_input_available() -> bool:
-    try:
-        import sounddevice as sd  # noqa: F401
-    except OSError:
-        return False
-    return True
-
-
 def _import_sounddevice():
     try:
         import sounddevice as sd
@@ -30,6 +22,18 @@ def _import_sounddevice():
             "Ubuntu/Debian: sudo apt install libportaudio2 portaudio19-dev"
         ) from exc
     return sd
+
+
+def audio_input_available() -> bool:
+    try:
+        sd = _import_sounddevice()
+    except (OSError, RuntimeError):
+        return False
+    try:
+        sd.query_devices(kind="input")
+        return True
+    except Exception:
+        return False
 
 
 class MicrophoneRecorder:

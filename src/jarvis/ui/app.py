@@ -13,6 +13,7 @@ from jarvis.conversation.service import ConversationService, DelegateRequest
 from jarvis.jobs.store import JobStore
 from jarvis.jobs.worker import JobWorker
 from jarvis.llm.factory import build_llm_provider
+from jarvis.ui.browser_mic import BROWSER_MIC_JS, parse_mic_event, transcribe_browser_audio
 from jarvis.voice.capture import MicrophoneRecorder, audio_input_available
 from jarvis.voice.stt import WhisperSTT
 from jarvis.voice.tts import build_tts
@@ -30,11 +31,20 @@ class JarvisApp:
         self._llm = build_llm_provider(settings, self._app_settings.llm)
         self._tts = build_tts(self._app_settings.tts)
         self._stt = WhisperSTT(self._app_settings.stt)
+        self._use_server_mic = os.environ.get("JARVIS_VOICE_SERVER_MIC", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         self._recorder = (
-            MicrophoneRecorder(self._app_settings.audio) if audio_input_available() else None
+            MicrophoneRecorder(self._app_settings.audio)
+            if self._use_server_mic and audio_input_available()
+            else None
         )
         self._pending_delegate: DelegateRequest | None = None
         self._state = "idle"
+        self._mic_button: Any = None
+        self._browser_mic_active = False
         self._chat_container: ui.column | None = None
         self._status_label: ui.label | None = None
         self._input: ui.textarea | None = None
@@ -131,20 +141,36 @@ class JarvisApp:
         self._tts.speak("Sent to Cursor.")
         self._set_state("idle")
 
-    def _start_recording(self) -> None:
+    def _set_mic_visual(self, recording: bool) -> None:
+        if not self._mic_button:
+            return
+        if recording:
+            self._mic_button.props("color=red icon=mic")
+        else:
+            self._mic_button.props("color=primary icon=mic")
+
+    def _start_server_recording(self) -> None:
         if not self._recorder:
             self._append_message(
                 "assistant",
-                "Microphone unavailable (install PortAudio: "
-                "`sudo apt install libportaudio2` on Linux). Text chat still works.",
+                "Server microphone unavailable. Use the in-browser mic (default), or install "
+                "PortAudio and set JARVIS_VOICE_SERVER_MIC=1.",
             )
             return
-        self._recorder.start()
+        try:
+            self._recorder.start()
+        except Exception as exc:
+            logger.exception("Microphone start failed")
+            self._append_message("assistant", f"Microphone error: {exc}")
+            self._set_state("error")
+            return
+        self._set_mic_visual(True)
         self._set_state("listening")
 
-    async def _stop_recording_and_transcribe(self) -> None:
+    async def _stop_server_recording_and_transcribe(self) -> None:
         if not self._recorder:
             return
+        self._set_mic_visual(False)
         self._set_state("transcribing")
         recording = self._recorder.stop()
         try:
@@ -155,6 +181,9 @@ class JarvisApp:
             self._append_message("assistant", f"Transcription failed: {exc}")
             self._set_state("error")
             return
+        await self._apply_transcript(text)
+
+    async def _apply_transcript(self, text: str) -> None:
         if not text:
             self._append_message("assistant", "I didn't catch that.")
             self._set_state("idle")
@@ -166,6 +195,35 @@ class JarvisApp:
             self._tts.speak("Review the text and press send.")
         else:
             await self._send_text(text)
+
+    async def _handle_browser_mic(self, event) -> None:
+        payload = parse_mic_event(event.args)
+        action = payload.get("action")
+        if action == "start":
+            self._browser_mic_active = True
+            self._set_mic_visual(True)
+            self._set_state("listening")
+            return
+        if action == "error":
+            self._browser_mic_active = False
+            self._set_mic_visual(False)
+            message = payload.get("message") or "Microphone permission denied or unavailable."
+            self._append_message("assistant", f"Microphone: {message}")
+            self._set_state("error")
+            return
+        if action != "stop":
+            return
+        self._browser_mic_active = False
+        self._set_mic_visual(False)
+        self._set_state("transcribing")
+        try:
+            text = await asyncio.to_thread(transcribe_browser_audio, self._stt, payload)
+        except Exception as exc:
+            logger.exception("Browser audio transcription failed")
+            self._append_message("assistant", f"Transcription failed: {exc}")
+            self._set_state("error")
+            return
+        await self._apply_transcript(text)
 
     def build(self) -> None:
         ui.page_title("Jarvis")
@@ -190,17 +248,25 @@ class JarvisApp:
 
                     ui.button("Send", on_click=send_click).props("color=primary")
 
-                    mic = ui.button(icon="mic")
+                    self._mic_button = ui.button(icon="mic").props("color=primary")
+                    if self._use_server_mic:
+                        async def server_mic_hold() -> None:
+                            if self._state == "listening":
+                                await self._stop_server_recording_and_transcribe()
+                            else:
+                                self._start_server_recording()
 
-                    async def mic_down() -> None:
-                        self._start_recording()
-
-                    async def mic_up() -> None:
-                        await self._stop_recording_and_transcribe()
-
-                    mic.on("mousedown", mic_down)
-                    mic.on("mouseup", mic_up)
-                    mic.on("mouseleave", mic_up)
+                        self._mic_button.on("click", server_mic_hold)
+                        ui.label("Server mic: click to start/stop").classes("text-xs text-gray-500")
+                    else:
+                        self._mic_button.on(
+                            "click",
+                            self._handle_browser_mic,
+                            js_handler=BROWSER_MIC_JS,
+                        )
+                        ui.label("Mic: click to start, click again to stop").classes(
+                            "text-xs text-gray-500"
+                        )
 
                 with ui.row().classes("gap-2"):
                     ui.button("Stop speech", on_click=lambda: self._tts.stop())
@@ -216,7 +282,8 @@ class JarvisApp:
 
         self._append_message(
             "assistant",
-            "Hello. I'm Jarvis. Type or hold the mic button to talk. "
+            "Hello. I'm Jarvis. Type a message or use the mic button "
+            "(click to start, click again to stop). "
             "Coding tasks can be sent to Cursor when you confirm.",
         )
 
