@@ -1,0 +1,50 @@
+app:
+  data_dir: "~/Library/Application Support/Jarvis"
+
+hotkey:
+  enabled: false
+  hold_key: "f8"
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  max_record_seconds: 120
+
+stt:
+  model: "base"
+  device: "cpu"
+  compute_type: "int8"
+  language: "en"
+
+llm:
+  provider: gemini
+  model: "gemini-2.0-flash"
+  timeout_seconds: 60
+  max_output_tokens: 2048
+
+tts:
+  engine: "auto"
+  max_chars: 4000
+  interrupt_on_new_message: true
+
+conversation:
+  max_messages: 40
+  require_stt_confirm: true
+
+cursor:
+  # Cursor installer puts `agent` in ~/.local/bin (not always on PATH on managed Macs)
+  binary: "agent"
+  default_timeout_seconds: 3600
+  require_confirmation: true
+  focus_on_complete: true
+
+notifications:
+  enabled: true
+
+ui:
+  host: "127.0.0.1"
+  port: 8765
+
+jobs:
+  database_path: "data/jobs.sqlite"
+  poll_interval_seconds: 2

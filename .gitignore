@@ -1,0 +1,14 @@
+.env
+config/settings.local.yaml
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+data/
+config-verify/
+test-repo/
+*.sqlite
+.DS_Store
+.local-test/
+.local-test-user/

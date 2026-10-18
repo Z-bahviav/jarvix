@@ -1,0 +1,3 @@
+# Copy to settings.local.yaml (gitignored) or run: jarvis doctor
+cursor:
+  binary: "/Users/you/.local/share/cursor-agent/versions/VERSION/cursor-agent"

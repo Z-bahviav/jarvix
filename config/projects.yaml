@@ -1,0 +1,5 @@
+projects:
+  jarvis-test:
+    repo: "test-repo"
+    default_folder: "."
+    description: "Local test repo created by scripts/run-verification.sh"
