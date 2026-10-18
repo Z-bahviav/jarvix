@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from jarvis.config import LLMSettings
@@ -12,20 +14,60 @@ from jarvis.llm.tools import DELEGATE_CURSOR_TOOL
 
 logger = logging.getLogger(__name__)
 
+_RETRYABLE_STATUS = {429, 500, 503, 504}
+
 
 class GeminiProvider(LLMProvider):
     def __init__(self, settings: LLMSettings, api_key: str) -> None:
         self._settings = settings
-        self._client = genai.Client(api_key=api_key)
+        timeout_ms = max(5, settings.timeout_seconds) * 1000
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=timeout_ms),
+        )
 
     def health(self) -> bool:
         return bool(self._client)
+
+    def _models_to_try(self) -> list[str]:
+        models = [self._settings.model]
+        for name in self._settings.fallback_models:
+            if name and name not in models:
+                models.append(name)
+        return models
 
     def complete(
         self,
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None = None,
+    ) -> CompletionResult:
+        last_error: Exception | None = None
+        for model in self._models_to_try():
+            try:
+                return self._complete_model(model, messages, tools=tools)
+            except genai_errors.APIError as exc:
+                last_error = exc
+                code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+                if code in _RETRYABLE_STATUS or code is None:
+                    logger.warning("Gemini model %s unavailable (%s), trying fallback", model, exc)
+                    continue
+                logger.exception("Gemini API error on model %s", model)
+                raise RuntimeError(f"Gemini request failed: {exc}") from exc
+            except FuturesTimeoutError as exc:
+                last_error = exc
+                logger.warning("Gemini model %s timed out, trying fallback", model)
+                continue
+        raise RuntimeError(
+            f"Gemini request failed after trying {self._models_to_try()}: {last_error}"
+        )
+
+    def _complete_model(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
     ) -> CompletionResult:
         system_parts: list[str] = []
         contents: list[types.Content] = []
@@ -60,16 +102,22 @@ class GeminiProvider(LLMProvider):
             config_kwargs["tools"] = [types.Tool(function_declarations=functions)]
 
         config = types.GenerateContentConfig(**config_kwargs)
+        timeout = max(5, self._settings.timeout_seconds)
 
-        try:
-            response = self._client.models.generate_content(
-                model=self._settings.model,
+        def _call() -> Any:
+            return self._client.models.generate_content(
+                model=model,
                 contents=contents,
                 config=config,
             )
-        except Exception as exc:
-            logger.exception("Gemini API error")
-            raise RuntimeError(f"Gemini request failed: {exc}") from exc
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_call)
+            try:
+                response = future.result(timeout=timeout)
+            except FuturesTimeoutError:
+                future.cancel()
+                raise
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -85,6 +133,7 @@ class GeminiProvider(LLMProvider):
                     args = dict(fc.args) if fc.args else {}
                     tool_calls.append(ToolCall(name=fc.name or "", arguments=args))
 
+        logger.info("Gemini completion via model %s (%d chars)", model, len("".join(text_parts)))
         return CompletionResult(
             text="\n".join(text_parts).strip() or None,
             tool_calls=tool_calls,

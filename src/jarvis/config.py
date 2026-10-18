@@ -50,8 +50,11 @@ class STTSettings(BaseModel):
 
 class LLMSettings(BaseModel):
     provider: str = "gemini"
-    model: str = "gemini-3.8-flash"
-    timeout_seconds: int = 60
+    model: str = "gemini-3.5-flash"
+    fallback_models: list[str] = Field(
+        default_factory=lambda: ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-flash-latest"]
+    )
+    timeout_seconds: int = 45
     max_output_tokens: int = 2048
 
 

@@ -290,8 +290,17 @@ class JarvisApp:
                 self._set_state("idle")
         except Exception as exc:
             logger.exception("Chat error")
-            self._append_message("assistant", f"Error: {exc}")
-            self._set_state("listening" if self._voice_mode_active else "error")
+            msg = str(exc)
+            if "503" in msg or "UNAVAILABLE" in msg:
+                msg = (
+                    "Gemini is busy right now (high demand). "
+                    "Jarvis will try fallback models on the next message — speak again."
+                )
+            self._append_message("assistant", f"Error: {msg}")
+            if self._voice_mode_active:
+                self._set_voice_phase("listening", "Ready — try again", force=True)
+            else:
+                self._set_state("error")
         finally:
             if self._voice_mode_active:
                 self._set_voice_busy(False)
