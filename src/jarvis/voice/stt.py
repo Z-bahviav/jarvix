@@ -44,10 +44,7 @@ class WhisperSTT:
         return " ".join(s.text.strip() for s in segments).strip()
 
     def transcribe_file(self, path: str | Path) -> str:
-        model = self._ensure_model()
-        segments, _ = model.transcribe(
-            str(path),
-            language=self._settings.language or None,
-            vad_filter=True,
-        )
-        return " ".join(s.text.strip() for s in segments).strip()
+        from jarvis.voice.decode import decode_audio_file
+
+        samples = decode_audio_file(path, sampling_rate=16000)
+        return self.transcribe(samples, 16000)
