@@ -1,43 +1,33 @@
 # Install Jarvis on your Mac
 
-Jarvis is **not** installed automatically on `~/Desktop/Jarvis`. You need a copy of this folder on your machine.
+Jarvis does **not** appear on your Mac by itself. Clone it once, then run setup.
 
-## Option A — Clone from your Cursor / git repo
-
-If this project is in git (e.g. after your agent pushed it):
+## Available now — Cursor git (pushed)
 
 ```bash
-cd ~
-git clone <YOUR_REPO_URL> Jarvis
-cd Jarvis
-./scripts/setup.sh
-source .venv/bin/activate
+git clone https://origin.cursor.com/git/getwellnetwork/tmp-916c946cd0107a1d.git ~/Jarvis
+cd ~/Jarvis
 ```
 
-Use any folder you like (`~/Jarvis`, `~/Projects/Jarvis`, etc.) — **not** required to be on Desktop.
+Use Cursor/git login if prompted. Any folder is fine (`~/Jarvis`, not only Desktop).
 
-## Option B — Copy from Cursor Cloud Agent
+## Your GitHub — after you push
 
-1. Open the cloud agent run that built Jarvis.
-2. Use **Create repo** / download / sync if your workflow provides it.
-3. Or zip the `Jarvis` folder from the agent workspace and copy to your Mac.
+1. Create empty repo: https://github.com/new → **Z-bahviav/Jarvis**
+2. Push from a machine that has this code: `git push -u origin main`
+3. On Mac: `git clone https://github.com/Z-bahviav/Jarvis.git ~/Jarvis`
 
-## After you have the folder
+See `PUSH_TO_GITHUB.md`.
+
+## Setup
 
 ```bash
-cd ~/Jarvis   # wherever you put it
+cd ~/Jarvis
 ./scripts/setup.sh
 source .venv/bin/activate
 pip install -e .
-
 curl https://cursor.com/install -fsS | bash
 jarvis doctor
-
-# Edit .env — add JARVIS_GEMINI_API_KEY=
-nano .env
-
-./scripts/go.sh check
+nano .env   # JARVIS_GEMINI_API_KEY=
 ./scripts/go.sh
 ```
-
-No admin and **no** `~/.zshrc` edits required (`go.sh` loads `.env` and finds the Cursor binary).
