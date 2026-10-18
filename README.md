@@ -47,6 +47,8 @@ jarvis ui
 
 Open `http://127.0.0.1:8765` if the browser does not open automatically.
 
+On headless or cloud VMs, set `JARVIS_UI_SHOW=0` and use Cursor’s port preview (or SSH tunnel) to reach the UI. Override port with `JARVIS_UI_PORT` if needed.
+
 ## Configuration
 
 | Path | Purpose |

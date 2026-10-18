@@ -50,7 +50,7 @@ class STTSettings(BaseModel):
 
 class LLMSettings(BaseModel):
     provider: str = "gemini"
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-3.8-flash"
     timeout_seconds: int = 60
     max_output_tokens: int = 2048
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
+from nicegui import core as nicegui_core
 from nicegui import ui
 
 from jarvis.config import Settings
@@ -166,8 +168,6 @@ class JarvisApp:
             await self._send_text(text)
 
     def build(self) -> None:
-        self._worker.start()
-
         ui.page_title("Jarvis")
         with ui.header().classes("items-center justify-between"):
             ui.label("Jarvis").classes("text-h5")
@@ -229,14 +229,34 @@ class JarvisApp:
         self._set_state("idle")
 
     def run(self) -> None:
-        self.build()
+        self._worker.start()
+
+        def main_page() -> None:
+            self.build()
+
+        # Console entry (`jarvis ui`) enables NiceGUI "script mode", which re-runs sys.argv[0]
+        # on 404 and crashes with SystemExit. Use an explicit root page instead.
+        nicegui_core.script_mode = False
+
+        port = int(os.environ.get("JARVIS_UI_PORT", self._app_settings.ui.port))
         ui.run(
+            root=main_page,
             host=self._app_settings.ui.host,
-            port=self._app_settings.ui.port,
+            port=port,
             title="Jarvis",
             reload=False,
-            show=True,
+            show=_should_open_browser(),
+            favicon="🤖",
         )
+
+
+def _should_open_browser() -> bool:
+    explicit = os.environ.get("JARVIS_UI_SHOW", "").strip().lower()
+    if explicit in ("1", "true", "yes"):
+        return True
+    if explicit in ("0", "false", "no"):
+        return False
+    return bool(os.environ.get("DISPLAY"))
 
 
 def run_ui(settings: Settings | None = None) -> None:
