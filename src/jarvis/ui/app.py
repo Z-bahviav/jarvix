@@ -14,6 +14,11 @@ from jarvis.jobs.store import JobStore
 from jarvis.jobs.worker import JobWorker
 from jarvis.llm.factory import build_llm_provider
 from jarvis.ui.browser_mic import BROWSER_MIC_JS, parse_mic_event, transcribe_browser_audio
+from jarvis.ui.live_voice import (
+    LIVE_VOICE_TOGGLE_JS,
+    parse_live_voice_event,
+    speech_api_language,
+)
 from jarvis.voice.capture import MicrophoneRecorder, audio_input_available
 from jarvis.voice.stt import WhisperSTT
 from jarvis.voice.tts import build_tts
@@ -44,7 +49,14 @@ class JarvisApp:
         self._pending_delegate: DelegateRequest | None = None
         self._state = "idle"
         self._mic_button: Any = None
+        self._voice_button: Any = None
         self._browser_mic_active = False
+        self._voice_mode_active = False
+        self._voice_busy = False
+        self._voice_client: Any = None
+        self._live_transcript: Any = None
+        self._live_transcript_panel: Any = None
+        self._last_final_sent: str = ""
         self._chat_container: ui.column | None = None
         self._status_label: ui.label | None = None
         self._input: ui.textarea | None = None
@@ -105,12 +117,45 @@ class JarvisApp:
                     "text-sm"
                 )
 
+    def _set_voice_busy(self, busy: bool) -> None:
+        self._voice_busy = busy
+        if self._voice_client:
+            self._voice_client.run_javascript(f"window.jarvisSetVoiceBusy && jarvisSetVoiceBusy({str(busy).lower()})")
+
+    def _update_live_transcript(self, text: str, listening: bool = True) -> None:
+        if not self._live_transcript:
+            return
+        if not text.strip():
+            self._live_transcript.set_text("")
+            if self._live_transcript_panel:
+                self._live_transcript_panel.set_visibility(False)
+            return
+        self._live_transcript.set_text(text)
+        if self._live_transcript_panel:
+            self._live_transcript_panel.set_visibility(True)
+
+    def _set_voice_mode_visual(self, active: bool) -> None:
+        if not self._voice_button:
+            return
+        if active:
+            self._voice_button.props("color=red icon=settings_voice")
+            self._voice_button.classes(add="voice-pulse")
+        else:
+            self._voice_button.props("color=primary icon=settings_voice")
+            self._voice_button.classes(remove="voice-pulse")
+            self._update_live_transcript("")
+
     async def _send_text(self, text: str, auto_confirm: bool = False) -> None:
         text = text.strip()
         if not text:
             return
         self._append_message("user", text)
-        self._set_state("thinking")
+        self._update_live_transcript("")
+        if self._voice_mode_active:
+            self._set_state("thinking")
+            self._set_voice_busy(True)
+        else:
+            self._set_state("thinking")
         try:
             result = await asyncio.to_thread(
                 self._conversation.handle_user_text,
@@ -121,13 +166,25 @@ class JarvisApp:
             self._pending_delegate = result.delegate if result.job_id is None else None
             if result.job_id:
                 self._refresh_jobs()
-            else:
+            elif result.assistant_text:
+                if self._voice_mode_active:
+                    self._set_state("speaking")
+                    self._set_voice_busy(True)
                 self._tts.speak(result.assistant_text)
-            self._set_state("idle")
+                if self._voice_mode_active:
+                    await asyncio.to_thread(self._tts.wait_until_done, 120.0)
+            if self._voice_mode_active:
+                self._set_state("listening")
+            else:
+                self._set_state("idle")
         except Exception as exc:
             logger.exception("Chat error")
             self._append_message("assistant", f"Error: {exc}")
-            self._set_state("error")
+            self._set_state("listening" if self._voice_mode_active else "error")
+        finally:
+            if self._voice_mode_active:
+                self._set_voice_busy(False)
+                self._last_final_sent = ""
 
     async def _confirm_delegate(self) -> None:
         if not self._pending_delegate:
@@ -225,7 +282,73 @@ class JarvisApp:
             return
         await self._apply_transcript(text)
 
+    async def _handle_live_voice(self, event) -> None:
+        self._voice_client = event.client
+        payload = parse_live_voice_event(event.args)
+        action = payload.get("action")
+
+        if action == "mode":
+            enabled = bool(payload.get("enabled"))
+            self._voice_mode_active = enabled
+            self._set_voice_mode_visual(enabled)
+            if enabled:
+                lang = speech_api_language(self._app_settings.stt.language)
+                event.client.run_javascript(f"window.__jarvisVoiceLang = '{lang}';")
+                self._set_state("listening")
+                self._append_message(
+                    "assistant",
+                    "Voice mode on — speak naturally. I'll reply when you pause. Tap Voice again to stop.",
+                )
+            else:
+                self._set_state("idle")
+                self._set_voice_busy(False)
+                self._update_live_transcript("")
+            return
+
+        if not self._voice_mode_active:
+            return
+
+        if action == "error":
+            message = payload.get("message") or "Voice recognition error."
+            self._append_message("assistant", f"Voice: {message}")
+            self._voice_mode_active = False
+            self._set_voice_mode_visual(False)
+            self._set_state("error")
+            return
+
+        if action == "interim":
+            text = str(payload.get("text") or "")
+            self._update_live_transcript(text, listening=True)
+            if self._voice_mode_active and self._state not in ("thinking", "speaking"):
+                self._set_state("listening")
+            return
+
+        if action == "final":
+            text = str(payload.get("text") or "").strip()
+            if not text or self._voice_busy:
+                return
+            if text == self._last_final_sent:
+                return
+            self._last_final_sent = text
+            self._update_live_transcript(text, listening=False)
+            await self._send_text(text, auto_confirm=True)
+
     def build(self) -> None:
+        ui.add_css(
+            """
+            .voice-pulse {
+                animation: jarvis-voice-pulse 1.4s ease-in-out infinite;
+            }
+            @keyframes jarvis-voice-pulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.06); opacity: 0.85; }
+            }
+            .live-transcript-panel {
+                border-left: 4px solid #3b82f6;
+                background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%);
+            }
+            """
+        )
         ui.page_title("Jarvis")
         with ui.header().classes("items-center justify-between"):
             ui.label("Jarvis").classes("text-h5")
@@ -234,6 +357,11 @@ class JarvisApp:
         with ui.row().classes("w-full gap-4 p-4"):
             with ui.column().classes("flex-grow"):
                 self._chat_container = ui.column().classes("w-full gap-2 overflow-auto h-96")
+                with ui.card().classes("w-full live-transcript-panel p-3 mb-2") as panel:
+                    self._live_transcript_panel = panel
+                    panel.set_visibility(False)
+                    ui.label("Live").classes("text-xs font-bold text-blue-600 uppercase tracking-wide")
+                    self._live_transcript = ui.label("").classes("text-lg text-gray-600 italic")
                 with ui.row().classes("w-full gap-2 items-end"):
                     self._input = (
                         ui.textarea("Message")
@@ -248,7 +376,20 @@ class JarvisApp:
 
                     ui.button("Send", on_click=send_click).props("color=primary")
 
-                    self._mic_button = ui.button(icon="mic").props("color=primary")
+                    if not self._use_server_mic:
+                        self._voice_button = (
+                            ui.button("Voice", icon="settings_voice")
+                            .props("color=primary unelevated")
+                            .classes("px-4")
+                        )
+                        self._voice_button.on(
+                            "click",
+                            self._handle_live_voice,
+                            js_handler=LIVE_VOICE_TOGGLE_JS,
+                        )
+
+                    self._mic_button = ui.button(icon="mic").props("flat round dense")
+                    self._mic_button.tooltip("Dictation (record then transcribe)")
                     if self._use_server_mic:
                         async def server_mic_hold() -> None:
                             if self._state == "listening":
@@ -264,11 +405,11 @@ class JarvisApp:
                             self._handle_browser_mic,
                             js_handler=BROWSER_MIC_JS,
                         )
-                        ui.label("Mic: click to start, click again to stop").classes(
-                            "text-xs text-gray-500"
-                        )
-
-                with ui.row().classes("gap-2"):
+                with ui.row().classes("gap-2 items-center"):
+                    if self._voice_button:
+                        ui.label(
+                            "Voice: live conversation (ChatGPT-style). Dictation mic is optional."
+                        ).classes("text-xs text-gray-500")
                     ui.button("Stop speech", on_click=lambda: self._tts.stop())
                     ui.button("Confirm Cursor task", on_click=self._confirm_delegate)
                     ui.button("New chat", on_click=self._new_chat)
@@ -282,9 +423,8 @@ class JarvisApp:
 
         self._append_message(
             "assistant",
-            "Hello. I'm Jarvis. Type a message or use the mic button "
-            "(click to start, click again to stop). "
-            "Coding tasks can be sent to Cursor when you confirm.",
+            "Hello. I'm Jarvis. Press **Voice** for hands-free chat with live captions, "
+            "or type below. Coding tasks can be sent to Cursor when you confirm.",
         )
 
     def _new_chat(self) -> None:
@@ -292,6 +432,10 @@ class JarvisApp:
         if self._chat_container:
             self._chat_container.clear()
         self._pending_delegate = None
+        self._last_final_sent = ""
+        self._voice_mode_active = False
+        self._set_voice_mode_visual(False)
+        self._set_voice_busy(False)
         self._append_message("assistant", "Started a new conversation.")
         self._set_state("idle")
 

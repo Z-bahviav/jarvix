@@ -71,6 +71,10 @@ class InterruptibleTTS(TTSEngine):
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=0.5)
 
+    def wait_until_done(self, timeout: float | None = None) -> None:
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+
 
 def build_tts(settings: TTSSettings) -> TTSEngine:
     engine = settings.engine.lower()

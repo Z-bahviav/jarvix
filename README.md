@@ -49,7 +49,7 @@ Open `http://127.0.0.1:8765` if the browser does not open automatically.
 
 On headless or cloud VMs, set `JARVIS_UI_SHOW=0` and use Cursor’s port preview (or SSH tunnel) to reach the UI. Override port with `JARVIS_UI_PORT` if needed.
 
-**Voice in the UI** uses your **browser microphone** (click mic to start, click again to stop). Allow the mic when the browser prompts. For server-side capture instead (e.g. CLI on the same machine), set `JARVIS_VOICE_SERVER_MIC=1`.
+**Voice in the UI:** press **Voice** for ChatGPT-style live conversation (live captions while you speak, auto-send when you pause). Use Chrome or Edge for best results (Web Speech API). The small mic icon is optional dictation (Whisper). For server-side capture instead, set `JARVIS_VOICE_SERVER_MIC=1`.
 
 ## Configuration
 
