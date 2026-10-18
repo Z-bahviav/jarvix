@@ -13,15 +13,40 @@ LIVE_VOICE_TOGGLE_JS = """
     active: false,
     pause: false,
     recognition: null,
+    restartTimer: null,
   });
+
+  const clearRestart = () => {
+    if (voice.restartTimer) {
+      clearTimeout(voice.restartTimer);
+      voice.restartTimer = null;
+    }
+  };
+
+  const scheduleRestart = (delayMs = 400) => {
+    clearRestart();
+    if (!voice.active || voice.pause || !voice.recognition) return;
+    voice.restartTimer = setTimeout(() => {
+      voice.restartTimer = null;
+      if (!voice.active || voice.pause) return;
+      try {
+        voice.recognition.start();
+      } catch (err) {
+        const msg = String(err?.message || err);
+        if (msg.includes('already started')) return;
+        scheduleRestart(Math.min(delayMs * 2, 3000));
+      }
+    }, delayMs);
+  };
 
   window.jarvisSetVoiceBusy = (busy) => {
     voice.pause = !!busy;
     if (!voice.recognition) return;
+    clearRestart();
     if (busy) {
       try { voice.recognition.stop(); } catch (_) {}
     } else if (voice.active) {
-      try { voice.recognition.start(); } catch (_) {}
+      scheduleRestart(250);
     }
   };
 
@@ -29,6 +54,7 @@ LIVE_VOICE_TOGGLE_JS = """
     const rec = new SpeechRecognition();
     rec.continuous = true;
     rec.interimResults = true;
+    rec.maxAlternatives = 1;
     rec.lang = window.__jarvisVoiceLang || 'en-US';
     rec.onresult = (event) => {
       let interim = '';
@@ -43,13 +69,24 @@ LIVE_VOICE_TOGGLE_JS = """
       if (finals.trim()) emit({ action: 'final', text: finals.trim() });
     };
     rec.onerror = (e) => {
-      if (e.error === 'no-speech' || e.error === 'aborted') return;
-      emit({ action: 'error', message: e.error || 'speech recognition error' });
+      const code = e.error || 'unknown';
+      if (code === 'no-speech' || code === 'aborted') return;
+      if (code === 'network') {
+        emit({ action: 'warn', message: code });
+        scheduleRestart(600);
+        return;
+      }
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        voice.active = false;
+        clearRestart();
+        emit({ action: 'error', message: code });
+        return;
+      }
+      emit({ action: 'warn', message: code });
+      scheduleRestart(800);
     };
     rec.onend = () => {
-      if (voice.active && !voice.pause) {
-        try { rec.start(); } catch (_) {}
-      }
+      scheduleRestart(300);
     };
     voice.recognition = rec;
   }
@@ -57,18 +94,26 @@ LIVE_VOICE_TOGGLE_JS = """
   if (!voice.active) {
     voice.active = true;
     voice.pause = false;
+    voice.recognition.lang = window.__jarvisVoiceLang || voice.recognition.lang || 'en-US';
+    clearRestart();
     try {
       voice.recognition.start();
       emit({ action: 'mode', enabled: true });
     } catch (err) {
+      const msg = String(err?.message || err);
+      if (msg.includes('already started')) {
+        emit({ action: 'mode', enabled: true });
+        return;
+      }
       voice.active = false;
-      emit({ action: 'error', message: String(err?.message || err) });
+      emit({ action: 'error', message: msg });
     }
     return;
   }
 
   voice.active = false;
   voice.pause = false;
+  clearRestart();
   try { voice.recognition.stop(); } catch (_) {}
   emit({ action: 'mode', enabled: false });
 }

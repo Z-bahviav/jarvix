@@ -294,7 +294,7 @@ class JarvisApp:
             if enabled:
                 lang = speech_api_language(self._app_settings.stt.language)
                 event.client.run_javascript(f"window.__jarvisVoiceLang = '{lang}';")
-                self._set_state("listening")
+                self._set_state("listening — speak anytime")
                 self._append_message(
                     "assistant",
                     "Voice mode on — speak naturally. I'll reply when you pause. Tap Voice again to stop.",
@@ -308,11 +308,23 @@ class JarvisApp:
         if not self._voice_mode_active:
             return
 
+        if action == "warn":
+            if self._voice_mode_active and not self._voice_busy:
+                self._set_state("listening — reconnecting mic")
+            return
+
         if action == "error":
             message = payload.get("message") or "Voice recognition error."
-            self._append_message("assistant", f"Voice: {message}")
+            self._append_message(
+                "assistant",
+                f"Voice mode stopped: {message}. "
+                "Check microphone permission and use Chrome/Edge on localhost or HTTPS.",
+            )
             self._voice_mode_active = False
             self._set_voice_mode_visual(False)
+            event.client.run_javascript(
+                "if (window.__jarvisVoice) { window.__jarvisVoice.active = false; }"
+            )
             self._set_state("error")
             return
 
