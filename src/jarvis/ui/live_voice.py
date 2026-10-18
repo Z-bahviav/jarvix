@@ -14,7 +14,48 @@ LIVE_VOICE_TOGGLE_JS = """
     pause: false,
     recognition: null,
     restartTimer: null,
+    levelStream: null,
+    levelCtx: null,
+    levelTimer: null,
+    lastLevelEmit: 0,
   });
+
+  const stopLevelMeter = () => {
+    if (voice.levelTimer) cancelAnimationFrame(voice.levelTimer);
+    voice.levelTimer = null;
+    if (voice.levelStream) voice.levelStream.getTracks().forEach((t) => t.stop());
+    voice.levelStream = null;
+    if (voice.levelCtx) voice.levelCtx.close().catch(() => {});
+    voice.levelCtx = null;
+  };
+
+  const startLevelMeter = async () => {
+    stopLevelMeter();
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    try {
+      voice.levelStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voice.levelCtx = new AudioContext();
+      const src = voice.levelCtx.createMediaStreamSource(voice.levelStream);
+      const analyser = voice.levelCtx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        if (!voice.active) return;
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        const level = Math.min(1, sum / data.length / 90);
+        const now = performance.now();
+        if (now - voice.lastLevelEmit > 90) {
+          voice.lastLevelEmit = now;
+          emit({ action: 'level', value: level });
+        }
+        voice.levelTimer = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (_) {}
+  };
 
   const clearRestart = () => {
     if (voice.restartTimer) {
@@ -104,6 +145,7 @@ LIVE_VOICE_TOGGLE_JS = """
     clearRestart();
     try {
       voice.recognition.start();
+      startLevelMeter();
       emit({ action: 'mode', enabled: true });
     } catch (err) {
       const msg = String(err?.message || err);
@@ -120,6 +162,7 @@ LIVE_VOICE_TOGGLE_JS = """
   voice.active = false;
   voice.pause = false;
   clearRestart();
+  stopLevelMeter();
   try { voice.recognition.stop(); } catch (_) {}
   emit({ action: 'mode', enabled: false });
 }
