@@ -50,6 +50,13 @@ LIVE_VOICE_TOGGLE_JS = """
     }
   };
 
+  window.jarvisClearUtterance = () => {
+    if (!voice.recognition || !voice.active) return;
+    clearRestart();
+    try { voice.recognition.stop(); } catch (_) {}
+    if (!voice.pause) scheduleRestart(200);
+  };
+
   if (!voice.recognition) {
     const rec = new SpeechRecognition();
     rec.continuous = true;
@@ -65,8 +72,7 @@ LIVE_VOICE_TOGGLE_JS = """
         else interim += piece;
       }
       const live = (finals + interim).trim();
-      if (live) emit({ action: 'interim', text: live });
-      if (finals.trim()) emit({ action: 'final', text: finals.trim() });
+      if (live) emit({ action: 'speech', text: live });
     };
     rec.onerror = (e) => {
       const code = e.error || 'unknown';

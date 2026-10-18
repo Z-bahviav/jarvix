@@ -30,6 +30,7 @@ tts:
 conversation:
   max_messages: 40
   require_stt_confirm: true
+  voice_pause_seconds: 5
 
 cursor:
   # Cursor installer puts `agent` in ~/.local/bin (not always on PATH on managed Macs)

@@ -64,6 +64,7 @@ class TTSSettings(BaseModel):
 class ConversationSettings(BaseModel):
     max_messages: int = 40
     require_stt_confirm: bool = True
+    voice_pause_seconds: float = 5.0
 
 
 class CursorSettings(BaseModel):

@@ -1,8 +1,8 @@
 from jarvis.ui.live_voice import parse_live_voice_event, speech_api_language
 
 
-def test_parse_live_voice_interim() -> None:
-    ev = parse_live_voice_event({"action": "interim", "text": "hello"})
+def test_parse_live_voice_speech() -> None:
+    ev = parse_live_voice_event({"action": "speech", "text": "hello"})
     assert ev["text"] == "hello"
 
 

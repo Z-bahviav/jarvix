@@ -57,6 +57,9 @@ class JarvisApp:
         self._live_transcript: Any = None
         self._live_transcript_panel: Any = None
         self._last_final_sent: str = ""
+        self._voice_pending_text: str = ""
+        self._voice_pause_task: asyncio.Task[None] | None = None
+        self._voice_pause_seconds = float(self._app_settings.conversation.voice_pause_seconds)
         self._chat_container: ui.column | None = None
         self._status_label: ui.label | None = None
         self._input: ui.textarea | None = None
@@ -122,6 +125,50 @@ class JarvisApp:
         if self._voice_client:
             self._voice_client.run_javascript(f"window.jarvisSetVoiceBusy && jarvisSetVoiceBusy({str(busy).lower()})")
 
+    def _cancel_voice_pause_timer(self) -> None:
+        if self._voice_pause_task and not self._voice_pause_task.done():
+            self._voice_pause_task.cancel()
+        self._voice_pause_task = None
+
+    def _clear_voice_utterance(self) -> None:
+        self._voice_pending_text = ""
+        if self._voice_client:
+            self._voice_client.run_javascript("window.jarvisClearUtterance && jarvisClearUtterance()")
+
+    def _schedule_voice_send_after_pause(self) -> None:
+        self._cancel_voice_pause_timer()
+        self._voice_pause_task = asyncio.create_task(self._voice_send_after_pause())
+
+    async def _voice_send_after_pause(self) -> None:
+        try:
+            await asyncio.sleep(self._voice_pause_seconds)
+        except asyncio.CancelledError:
+            return
+        text = self._voice_pending_text.strip()
+        if (
+            not text
+            or not self._voice_mode_active
+            or self._voice_busy
+            or text == self._last_final_sent
+        ):
+            return
+        self._last_final_sent = text
+        self._voice_pending_text = ""
+        self._update_live_transcript("")
+        self._clear_voice_utterance()
+        await self._send_text(text, auto_confirm=True)
+
+    async def _voice_on_speech(self, text: str) -> None:
+        text = text.strip()
+        if not text or self._voice_busy or not self._voice_mode_active:
+            return
+        self._voice_pending_text = text
+        self._update_live_transcript(text, listening=True)
+        if self._state not in ("thinking", "speaking"):
+            pause = int(self._voice_pause_seconds)
+            self._set_state(f"listening — send after {pause}s quiet")
+        self._schedule_voice_send_after_pause()
+
     def _update_live_transcript(self, text: str, listening: bool = True) -> None:
         if not self._live_transcript:
             return
@@ -149,6 +196,7 @@ class JarvisApp:
         text = text.strip()
         if not text:
             return
+        self._cancel_voice_pause_timer()
         self._append_message("user", text)
         self._update_live_transcript("")
         if self._voice_mode_active:
@@ -174,7 +222,8 @@ class JarvisApp:
                 if self._voice_mode_active:
                     await asyncio.to_thread(self._tts.wait_until_done, 120.0)
             if self._voice_mode_active:
-                self._set_state("listening")
+                pause = int(self._voice_pause_seconds)
+                self._set_state(f"listening — send after {pause}s quiet")
             else:
                 self._set_state("idle")
         except Exception as exc:
@@ -295,13 +344,17 @@ class JarvisApp:
                 lang = speech_api_language(self._app_settings.stt.language)
                 event.client.run_javascript(f"window.__jarvisVoiceLang = '{lang}';")
                 self._set_state("listening — speak anytime")
+                pause = int(self._voice_pause_seconds)
                 self._append_message(
                     "assistant",
-                    "Voice mode on — speak naturally. I'll reply when you pause. Tap Voice again to stop.",
+                    f"Voice mode on — speak naturally. After **{pause} seconds** of silence "
+                    "I'll send your message and reply. Tap Voice again to stop.",
                 )
             else:
                 self._set_state("idle")
                 self._set_voice_busy(False)
+                self._cancel_voice_pause_timer()
+                self._voice_pending_text = ""
                 self._update_live_transcript("")
             return
 
@@ -328,22 +381,9 @@ class JarvisApp:
             self._set_state("error")
             return
 
-        if action == "interim":
-            text = str(payload.get("text") or "")
-            self._update_live_transcript(text, listening=True)
-            if self._voice_mode_active and self._state not in ("thinking", "speaking"):
-                self._set_state("listening")
+        if action in ("interim", "final", "speech"):
+            await self._voice_on_speech(str(payload.get("text") or ""))
             return
-
-        if action == "final":
-            text = str(payload.get("text") or "").strip()
-            if not text or self._voice_busy:
-                return
-            if text == self._last_final_sent:
-                return
-            self._last_final_sent = text
-            self._update_live_transcript(text, listening=False)
-            await self._send_text(text, auto_confirm=True)
 
     def build(self) -> None:
         ui.add_css(
@@ -445,6 +485,8 @@ class JarvisApp:
             self._chat_container.clear()
         self._pending_delegate = None
         self._last_final_sent = ""
+        self._voice_pending_text = ""
+        self._cancel_voice_pause_timer()
         self._voice_mode_active = False
         self._set_voice_mode_visual(False)
         self._set_voice_busy(False)
