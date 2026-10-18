@@ -18,12 +18,15 @@ stt:
 
 llm:
   provider: gemini
-  model: "gemini-3.5-flash"
+  # Lite models avoid gemini-3.8-flash 503 spikes; fallbacks are tried in order.
+  model: "gemini-3.5-flash-lite"
   fallback_models:
+    - "gemini-flash-lite-latest"
+    - "gemini-3.5-flash"
     - "gemini-3.6-flash"
-    - "gemini-3.8-flash"
-    - "gemini-flash-latest"
-  timeout_seconds: 45
+    - "gemini-3.1-flash-lite"
+  timeout_seconds: 30
+  per_attempt_timeout_seconds: 12
   max_output_tokens: 2048
 
 tts:

@@ -15,15 +15,30 @@ from jarvis.llm.tools import DELEGATE_CURSOR_TOOL
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {429, 500, 503, 504}
+_NO_RETRY = types.HttpRetryOptions(attempts=1)
+
+
+def _api_error_code(exc: genai_errors.APIError) -> int | None:
+    for attr in ("code", "status_code"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 class GeminiProvider(LLMProvider):
     def __init__(self, settings: LLMSettings, api_key: str) -> None:
         self._settings = settings
-        timeout_ms = max(5, settings.timeout_seconds) * 1000
+        attempt_ms = max(3, settings.per_attempt_timeout_seconds) * 1000
         self._client = genai.Client(
             api_key=api_key,
-            http_options=types.HttpOptions(timeout=timeout_ms),
+            http_options=types.HttpOptions(
+                timeout=attempt_ms,
+                retry_options=_NO_RETRY,
+            ),
         )
 
     def health(self) -> bool:
@@ -42,25 +57,25 @@ class GeminiProvider(LLMProvider):
         *,
         tools: list[dict[str, Any]] | None = None,
     ) -> CompletionResult:
+        models = self._models_to_try()
         last_error: Exception | None = None
-        for model in self._models_to_try():
+        for model in models:
             try:
+                logger.info("Gemini request → model=%s", model)
                 return self._complete_model(model, messages, tools=tools)
             except genai_errors.APIError as exc:
                 last_error = exc
-                code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-                if code in _RETRYABLE_STATUS or code is None:
-                    logger.warning("Gemini model %s unavailable (%s), trying fallback", model, exc)
+                code = _api_error_code(exc)
+                if code in _RETRYABLE_STATUS:
+                    logger.warning("Gemini %s returned %s, trying next model", model, code)
                     continue
                 logger.exception("Gemini API error on model %s", model)
                 raise RuntimeError(f"Gemini request failed: {exc}") from exc
             except FuturesTimeoutError as exc:
                 last_error = exc
-                logger.warning("Gemini model %s timed out, trying fallback", model)
+                logger.warning("Gemini %s timed out, trying next model", model)
                 continue
-        raise RuntimeError(
-            f"Gemini request failed after trying {self._models_to_try()}: {last_error}"
-        )
+        raise RuntimeError(f"Gemini unavailable (tried {models}): {last_error}")
 
     def _complete_model(
         self,
@@ -102,7 +117,7 @@ class GeminiProvider(LLMProvider):
             config_kwargs["tools"] = [types.Tool(function_declarations=functions)]
 
         config = types.GenerateContentConfig(**config_kwargs)
-        timeout = max(5, self._settings.timeout_seconds)
+        attempt_timeout = max(3, self._settings.per_attempt_timeout_seconds)
 
         def _call() -> Any:
             return self._client.models.generate_content(
@@ -114,7 +129,7 @@ class GeminiProvider(LLMProvider):
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(_call)
             try:
-                response = future.result(timeout=timeout)
+                response = future.result(timeout=attempt_timeout)
             except FuturesTimeoutError:
                 future.cancel()
                 raise
@@ -133,7 +148,7 @@ class GeminiProvider(LLMProvider):
                     args = dict(fc.args) if fc.args else {}
                     tool_calls.append(ToolCall(name=fc.name or "", arguments=args))
 
-        logger.info("Gemini completion via model %s (%d chars)", model, len("".join(text_parts)))
+        logger.info("Gemini OK model=%s chars=%d", model, len("".join(text_parts)))
         return CompletionResult(
             text="\n".join(text_parts).strip() or None,
             tool_calls=tool_calls,

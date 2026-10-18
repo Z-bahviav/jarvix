@@ -267,11 +267,20 @@ class JarvisApp:
             self._set_voice_busy(True)
         else:
             self._set_state("thinking")
+        llm_cap = (
+            self._app_settings.llm.timeout_seconds
+            + len(self._app_settings.llm.fallback_models) * self._app_settings.llm.per_attempt_timeout_seconds
+            + 5
+        )
         try:
-            result = await asyncio.to_thread(
-                self._conversation.handle_user_text,
-                text,
-                auto_confirm_delegate=auto_confirm,
+            logger.info("UI: starting LLM turn (%ss cap)", llm_cap)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._conversation.handle_user_text,
+                    text,
+                    auto_confirm_delegate=auto_confirm,
+                ),
+                timeout=llm_cap,
             )
             self._append_message("assistant", result.assistant_text)
             self._pending_delegate = result.delegate if result.job_id is None else None
@@ -288,13 +297,24 @@ class JarvisApp:
                 self._set_voice_phase("listening", "Your turn — speak when ready", force=True)
             else:
                 self._set_state("idle")
+        except asyncio.TimeoutError:
+            logger.error("UI: LLM turn timed out after %ss", llm_cap)
+            msg = (
+                f"Gemini did not respond within {llm_cap}s (503/retry overload). "
+                "Try again in a moment — lite fallback models are configured."
+            )
+            self._append_message("assistant", f"Error: {msg}")
+            if self._voice_mode_active:
+                self._set_voice_phase("listening", "Ready — try again", force=True)
+            else:
+                self._set_state("error")
         except Exception as exc:
             logger.exception("Chat error")
             msg = str(exc)
             if "503" in msg or "UNAVAILABLE" in msg:
                 msg = (
-                    "Gemini is busy right now (high demand). "
-                    "Jarvis will try fallback models on the next message — speak again."
+                    "Gemini returned 503 (high demand). "
+                    "Jarvis skipped retries and tried fallback models — speak again."
                 )
             self._append_message("assistant", f"Error: {msg}")
             if self._voice_mode_active:
