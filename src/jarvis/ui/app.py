@@ -11,7 +11,7 @@ from jarvis.conversation.service import ConversationService, DelegateRequest
 from jarvis.jobs.store import JobStore
 from jarvis.jobs.worker import JobWorker
 from jarvis.llm.factory import build_llm_provider
-from jarvis.voice.capture import MicrophoneRecorder
+from jarvis.voice.capture import MicrophoneRecorder, audio_input_available
 from jarvis.voice.stt import WhisperSTT
 from jarvis.voice.tts import build_tts
 
@@ -28,7 +28,9 @@ class JarvisApp:
         self._llm = build_llm_provider(settings, self._app_settings.llm)
         self._tts = build_tts(self._app_settings.tts)
         self._stt = WhisperSTT(self._app_settings.stt)
-        self._recorder = MicrophoneRecorder(self._app_settings.audio)
+        self._recorder = (
+            MicrophoneRecorder(self._app_settings.audio) if audio_input_available() else None
+        )
         self._pending_delegate: DelegateRequest | None = None
         self._state = "idle"
         self._chat_container: ui.column | None = None
@@ -128,10 +130,19 @@ class JarvisApp:
         self._set_state("idle")
 
     def _start_recording(self) -> None:
+        if not self._recorder:
+            self._append_message(
+                "assistant",
+                "Microphone unavailable (install PortAudio: "
+                "`sudo apt install libportaudio2` on Linux). Text chat still works.",
+            )
+            return
         self._recorder.start()
         self._set_state("listening")
 
     async def _stop_recording_and_transcribe(self) -> None:
+        if not self._recorder:
+            return
         self._set_state("transcribing")
         recording = self._recorder.stop()
         try:
