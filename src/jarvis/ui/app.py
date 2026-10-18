@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -189,6 +190,24 @@ class JarvisApp:
         if self._voice_client:
             self._voice_client.run_javascript(f"window.jarvisSetVoiceBusy && jarvisSetVoiceBusy({str(busy).lower()})")
 
+    async def _browser_speak(self, text: str, max_wait: float = 45.0) -> None:
+        if not self._voice_client or not text.strip():
+            return
+        snippet = text.strip()[:800]
+        await self._voice_client.run_javascript(
+            f"""
+            () => new Promise((resolve) => {{
+              const t = {json.dumps(snippet)};
+              speechSynthesis.cancel();
+              const u = new SpeechSynthesisUtterance(t);
+              u.onend = () => resolve('done');
+              u.onerror = () => resolve('err');
+              speechSynthesis.speak(u);
+            }})
+            """,
+            timeout=max_wait,
+        )
+
     def _cancel_voice_pause_timer(self) -> None:
         if self._voice_pause_task and not self._voice_pause_task.done():
             self._voice_pause_task.cancel()
@@ -282,17 +301,20 @@ class JarvisApp:
                 ),
                 timeout=llm_cap,
             )
-            self._append_message("assistant", result.assistant_text)
+            logger.info("UI: LLM turn finished, replying to client")
+            reply = result.assistant_text or ""
+            self._append_message("assistant", reply)
             self._pending_delegate = result.delegate if result.job_id is None else None
             if result.job_id:
                 self._refresh_jobs()
-            elif result.assistant_text:
-                if self._voice_mode_active:
-                    self._set_voice_phase("speaking", "Playing reply…", force=True)
-                    self._set_voice_busy(True)
-                self._tts.speak(result.assistant_text)
-                if self._voice_mode_active:
-                    await asyncio.to_thread(self._tts.wait_until_done, 120.0)
+            elif reply and self._voice_mode_active:
+                self._set_voice_phase("speaking", "Playing reply in browser…", force=True)
+                try:
+                    await self._browser_speak(reply)
+                except Exception:
+                    logger.exception("Browser TTS failed")
+            elif reply and not self._voice_mode_active:
+                self._tts.speak(reply)
             if self._voice_mode_active:
                 self._set_voice_phase("listening", "Your turn — speak when ready", force=True)
             else:
@@ -325,6 +347,9 @@ class JarvisApp:
             if self._voice_mode_active:
                 self._set_voice_busy(False)
                 self._last_final_sent = ""
+                if self._hud_phase == "thinking":
+                    logger.warning("UI: forcing exit from THINKING phase")
+                    self._set_voice_phase("listening", "Ready — speak again", force=True)
 
     async def _confirm_delegate(self) -> None:
         if not self._pending_delegate:
