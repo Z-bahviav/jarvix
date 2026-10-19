@@ -12,7 +12,7 @@ Conversational voice assistant for **macOS** (dev-friendly on Linux). Chat with 
 
 ## Requirements
 
-- Python 3.11+
+- Python **3.11 or 3.12** (not 3.13+ — `faster-whisper` / `ctranslate2` has no wheels yet)
 - [Cursor Agent CLI](https://cursor.com/docs/cli) (`cursor-agent login`)
 - `JARVIS_GEMINI_API_KEY` or `GEMINI_API_KEY`
 - Microphone (for voice)
@@ -32,7 +32,7 @@ Or manually:
 
 ```bash
 cd ~/Desktop/Jarvis
-python3 -m venv .venv
+python3.12 -m venv .venv   # or python3.11
 source .venv/bin/activate
 pip install -e ".[dev,tts]"
 
