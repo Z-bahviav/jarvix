@@ -24,8 +24,16 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
-pip install --upgrade pip
-pip install -e ".[dev,tts]"
+# Corporate pip.conf often sets a private index that times off VPN. Override when needed:
+#   JARVIS_USE_PUBLIC_PYPI=1 ./scripts/setup.sh
+PIP_INSTALL_ARGS=()
+if [[ "${JARVIS_USE_PUBLIC_PYPI:-}" == "1" ]]; then
+  PIP_INSTALL_ARGS=(-i https://pypi.org/simple)
+  echo "Using public PyPI (JARVIS_USE_PUBLIC_PYPI=1)"
+fi
+
+pip install "${PIP_INSTALL_ARGS[@]}" --upgrade pip
+pip install "${PIP_INSTALL_ARGS[@]}" -e ".[dev,tts]"
 
 if [[ ! -f .env ]]; then
   cp .env.example .env

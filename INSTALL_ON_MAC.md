@@ -36,8 +36,10 @@ See `PUSH_TO_GITHUB.md`.
 
 ## Setup
 
+Use **Python 3.11–3.12** if you can (`python3.12 -m venv .venv`). Python 3.15 may lack wheels for some deps.
+
 ```bash
-cd ~/Jarvis
+cd ~/Desktop/Jarvis
 ./scripts/setup.sh
 source .venv/bin/activate
 pip install -e .
@@ -46,3 +48,22 @@ jarvis doctor
 nano .env   # JARVIS_GEMINI_API_KEY=
 ./scripts/go.sh
 ```
+
+### pip times out on `packages.getwellnetwork.com`
+
+Your Mac is using a **company PyPI mirror** (from `~/.pip/pip.conf` or `PIP_INDEX_URL`). Off VPN it often fails.
+
+```bash
+cd ~/Desktop/Jarvis
+rm -rf .venv
+JARVIS_USE_PUBLIC_PYPI=1 ./scripts/setup.sh
+```
+
+Or one-off:
+
+```bash
+export PIP_INDEX_URL=https://pypi.org/simple
+pip install -e ".[dev,tts]"
+```
+
+To see what is configured: `pip config list` and `cat ~/.pip/pip.conf 2>/dev/null`.
