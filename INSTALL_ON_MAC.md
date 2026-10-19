@@ -12,7 +12,19 @@ git clone https://origin.cursor.com/git/getwellnetwork/tmp-916c946cd0107a1d.git 
 cd ~/Desktop/Jarvis
 ```
 
-Use Cursor/git login if prompted. You can use any folder; `~/Desktop/Jarvis` matches this project name on the cloud VM.
+**Do not** use your email + Cursor password at the git prompt — that will fail.
+
+Install the [Origin CLI](https://cursor.com/docs/origin/cli), sign in once, then clone:
+
+```bash
+curl -fsSL https://downloads.cursor.com/origin/install.sh | sh
+origin auth login
+git clone https://origin.cursor.com/git/getwellnetwork/tmp-916c946cd0107a1d.git ~/Desktop/Jarvis
+```
+
+Or: `origin repo clone getwellnetwork/tmp-916c946cd0107a1d ~/Desktop/Jarvis`
+
+You need access to the **getwellnetwork** team repo (same account you use in Cursor).
 
 ## Your GitHub — after you push
 
