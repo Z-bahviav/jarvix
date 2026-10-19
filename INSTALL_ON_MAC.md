@@ -4,12 +4,15 @@ Jarvis does **not** appear on your Mac by itself. Clone it once, then run setup.
 
 ## Available now — Cursor git (pushed)
 
+On your Mac (Terminal):
+
 ```bash
-git clone https://origin.cursor.com/git/getwellnetwork/tmp-916c946cd0107a1d.git ~/Jarvis
-cd ~/Jarvis
+mkdir -p ~/Desktop
+git clone https://origin.cursor.com/git/getwellnetwork/tmp-916c946cd0107a1d.git ~/Desktop/Jarvis
+cd ~/Desktop/Jarvis
 ```
 
-Use Cursor/git login if prompted. Any folder is fine (`~/Jarvis`, not only Desktop).
+Use Cursor/git login if prompted. You can use any folder; `~/Desktop/Jarvis` matches this project name on the cloud VM.
 
 ## Your GitHub — after you push
 
